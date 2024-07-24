@@ -67,13 +67,13 @@ if __name__=="__main__":
     img = img.resize((width, int(width*aspect)))
 
     # Pre-Processing
-    img_data = np.asarray(img)
+    img_data = np.asarray(img)[::-1]
     
     img_data = img_data / np.max(img_data)
     img_data = (img_data * num_divisions).astype(int)
     img_data = np.maximum(img_data - cutoff, 0)
 
-    wait_per_row = np.max(np.sum(img_data, axis=1))
+    wait_per_row = np.max(np.sum(img_data, axis=1))+1
     print(f"Wait steps per row: {wait_per_row}")
     
 
@@ -84,7 +84,7 @@ if __name__=="__main__":
         wait_remaining = wait_per_row
         for i, px in enumerate(row):
             if px:
-                data.append(i)
+                data.append(i*int(1000/width))
                 data.append(px)
                 wait_remaining -= px
 
