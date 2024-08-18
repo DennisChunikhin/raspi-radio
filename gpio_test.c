@@ -9,9 +9,13 @@
 
 void setup();
 void test_blink_led();
+int pulse_clock(int gpio_pin, int divI, int divF, struct timespec *sleep_request);
 
 volatile uint32_t *gpio;
 volatile uint32_t *gpclk;
+
+// For sleeping 10 microseconds
+struct timespec remaining, request = {0,10000};
 
 
 #define BLOCK_SIZE (4*1024)
@@ -29,53 +33,102 @@ volatile uint32_t *gpclk;
 #define GPIO_CLR *(gpio + 0x28/4)	// Offset 0x28
 
 /* GPICLK0 */
+#define CLK_PSW 0x5A000000
 #define CLK_OFF (0x70/4)
 #define CLK_BUSY (*gpclk & (1<<7))
-#define CLK_ENAB *gpclk |= 1<<4
-#define CLK_DISAB *gpclk &= ~(1<<4)
+#define CLK_ENAB *gpclk |= CLK_PSW | 1<<4
+#define CLK_DISAB *gpclk = (*gpclk & ~(1<<4)) | CLK_PSW
 
 
 
 int main(int argc, char *argv[]) {
+	// mmap
 	setup(&gpio, GPIO_BASE);
 	setup(&gpclk, GPCLK_BASE);
 	gpclk += CLK_OFF;
 
+	// GPIO pin to use (must have GPCLK0 as ALT0)
 	int g = 4;
 
-	GPIO_OUT_CLEAR(g);
-
-	// Select ALT0 (GPCLK0 on pin 4)
-	*(gpio) |= 1<<14;
-
-
-	// Clear enable bit and set clock password
-	*gpclk &= 0x00FFFFEF;
-	*gpclk |= 0x5A000000;
-
-	printf("%x\n", *gpclk);
+	// Clock frequency divisor
+	int divI = 35;
 
 	// Stop clock
 	if (CLK_BUSY) {
 		CLK_DISAB;
 	}
-	while (CLK_BUSY);
+	while (CLK_BUSY) nanosleep(&request, &remaining);
 
-	// Set clock source to PLLD
-	*gpclk &= ~(7);
-	*gpclk |= 6;
+	// Set clock source to PLLD (750MHz source) and MASH to 1
+	*gpclk = CLK_PSW | 6 | 1<<9;
+
+	nanosleep(&request, &remaining);
+
+	// Set clock frequency
+	*(gpclk+1) = CLK_PSW | (divI << 12);
+
+	nanosleep(&request, &remaining);
+
+	// Start clock
+	CLK_ENAB;
+
+	nanosleep(&request, &remaining);
+
+	struct timespec sleep_req = {0,1};
+	for(int j=0; j<1000; j++) {
+		for(int i=0; i<999; i+=10) {
+			// Set clock frequency
+			if (i == 10*(j/10) || i == 10*(j/10)+10) {
+				*(gpclk+1) = CLK_PSW | ((divI+1) << 12) | 0;
+			} else {
+				*(gpclk+1) = CLK_PSW | (divI << 12) | i;
+			}
+
+			nanosleep(&sleep_req, NULL);
+		}
+	}
+
+	CLK_DISAB;
+
+	return 0;
+}
+
+
+int pulse_clock(int g, int divI, int divF, struct timespec *sleep_request) {
+	// Clear GPIO pin function
+	GPIO_OUT_CLEAR(g);
+
+	// Stop clock
+	if (CLK_BUSY) {
+		CLK_DISAB;
+	}
+	while (CLK_BUSY) nanosleep(&request, &remaining);
+
+	// Set clock frequency
+	*(gpclk+1) = CLK_PSW | (divI << 12) | divF;
+
+	nanosleep(&request, &remaining);
+
+	// Set clock source to PLLD (measured as 750Mhz source)
+	*gpclk = CLK_PSW | 6 | 1<<9;
+
+	nanosleep(&request, &remaining);
 
 	// Start clock
 	CLK_ENAB;
 	
-	sleep(2);
-	printf("%x\n", CLK_BUSY);
-	printf("%x\n", *gpclk);
-	sleep(2);
+	nanosleep(&request, &remaining);
+
+	// Select ALT0 (GPCLK0 on pin 4)
+	*gpio |= 1<<14;
+
+	//puts("Clock started");
+
+	if (sleep_request != NULL)
+		nanosleep(sleep_request, NULL);
 
 	// Stop clock
 	CLK_DISAB;
-
 
 	return 0;
 }
