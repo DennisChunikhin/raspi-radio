@@ -130,3 +130,12 @@ pub fn get_symbols(bits: WSPRBits) -> SymbolBits {
 
     sym_bits
 }
+
+// Converts a callsign, locator, and power an encodes it to a WSPR symbol bit vector ready for
+// transmission
+pub fn encode_wspr_transmission(callsign: String, locator: &str, power: u32) -> Option<SymbolBits> {
+    let bits = encode_wspr_message(callsign, locator, power);
+    let bits = convolution_code(bits);
+    let bits = interleave(bits)?;
+    Some(get_symbols(bits))
+}
