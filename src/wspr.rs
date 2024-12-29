@@ -1,0 +1,132 @@
+use bitvec::prelude::*;
+
+// WSPR protocol description from: https://swharden.com/software/FSKview/wspr/
+
+const REG0_TAP: u32 = 0xF2D05351;
+const REG1_TAP: u32 = 0xE4613C47;
+const NUM_BITS_WSPR: usize = 81;
+
+type WSPRBits = BitArr!(for NUM_BITS_WSPR*2);
+type SymbolBits = BitArr!(for NUM_BITS_WSPR*4);
+
+
+// Character to numerical code according to WSPR protocol
+pub fn callsign_char_lookup(chr: char) -> u32 {
+    if let Some(digit) = chr.to_digit(10) {
+        digit
+    } else if chr==' ' {
+        36
+    } else {
+        (chr as u32) - 55
+    }
+}
+
+// Encodes callsign according to WSPR protocol (28 bit output)
+pub fn encode_callsign(mut callsign: String) -> u32 {
+    // Pads the callsign with spaces
+    if let Some(chr) = callsign.chars().nth(1) {
+        if chr.is_digit(10) {
+            callsign.insert_str(0, " ");
+        }
+    }
+
+    callsign = format!("{: <6}", callsign);
+
+    // Encodes callsign as u32
+    callsign
+        .chars()
+        .zip( [1,36,10,27,27,27].iter() )
+        .fold(0, |acc, (chr, m)| acc*m + callsign_char_lookup(chr))
+    - 7570
+}
+
+// Encodes 4-character Maidenhead Locator and power according to WSPR protocol (22 bit output)
+pub fn encode_locator_power(locator: &str, power: u32) -> u32 {
+    let values: Vec<u32> = locator
+        .chars()
+        .map(|chr|
+            if let Some(digit) = chr.to_digit(10) {
+                digit
+            } else {
+                (chr as u32) - 65
+            })
+        .collect();
+
+    ((179 - 10*values[0] - values[2])*180 + 10*values[1] + values[3])*128 + power + 64
+}
+
+// Encodes the callsign, Maidenhead Locator, and power to an 81 bit WSPR message
+// 11 byte output in the fromat callsign-locator-power-38 0 bits
+pub fn encode_wspr_message(callsign: String, locator: &str, power: u32) -> u128 {
+    let callsign_bits = encode_callsign(callsign) as u128;
+    let locator_power_bits = encode_locator_power(locator, power) as u128;
+
+    (callsign_bits<<(22+38)) + (locator_power_bits<<38)
+}
+
+
+// Constraint length K=32
+// Rate r=1/2
+pub fn convolution_code(mut bits: u128) -> WSPRBits {
+    let mut out = bitarr![0; NUM_BITS_WSPR*2];
+
+    // Memory registers
+    let mut reg0: u32 = 0;
+    let mut reg1: u32 = 0;
+
+    for i in 0..NUM_BITS_WSPR {
+        // Shift next bit into register
+        reg0 <<= 1;
+        reg0 |= 1 & (bits as u32);
+
+        reg1 <<= 1;
+        reg1 |= 1 & (bits as u32);
+
+        bits >>= 1;
+
+        // Single bit parity of register sums
+        let parity1 = (reg0 & REG0_TAP).count_ones() % 2 == 1;
+        let parity2 = (reg1 & REG1_TAP).count_ones() % 2 == 1;
+
+        out.set(2*i, parity1);
+        out.set(2*i+1, parity2);
+    }
+
+    out
+}
+
+// Interleaves bits according to WSPR protocol specification
+pub fn interleave(bits: WSPRBits) -> Option<WSPRBits> {
+    let mut out: WSPRBits = bitarr![0; NUM_BITS_WSPR*2];
+
+    let mut p = 0;
+    for i in 0u8..=255u8 {
+        let j = i.reverse_bits() as usize;
+        if j < NUM_BITS_WSPR*2 {
+            out.set(j, *bits.get(p)?);
+            p += 1;
+
+            if p == NUM_BITS_WSPR*2 {
+                return Some(out);
+            }
+        }
+    }
+
+    Some(out)
+}
+
+// Merges the 162 bit encoded and interleaved WSPR message with a set pseudo-random synchronization
+// bit vector to generate 2-bit symbol values for use in transmission modulation
+pub fn get_symbols(bits: WSPRBits) -> SymbolBits {
+    let sync_vec: WSPRBits = bitarr![1,1,0,0,0,0,0,0,1,0,0,0,1,1,1,0,0,0,1,0,0,1,0,1,1,1,1,0,0,0,0,0,0,0,1,0,0,1,0,1,0,0,0,0,0,0,1,0,1,1,0,0,1,1,0,1,0,0,0,1,1,0,1,0,0,0,0,1,1,0,1,0,1,0,1,0,1,0,0,1,0,0,1,0,1,1,0,0,0,1,1,0,1,0,1,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,1,1,1,0,1,1,0,0,1,1,0,1,0,0,0,1,1,1,0,0,0,0,0,1,0,1,0,0,1,1,0,0,0,0,0,0,0,1,1,0,1,0,1,1,0,0,0,1,1,0,0,0];
+
+    let mut sym_bits: SymbolBits = bitarr![0; NUM_BITS_WSPR*4];
+
+    sym_bits
+        .chunks_mut(2)
+        .zip(bits.iter().by_vals())
+        .zip(sync_vec.iter().by_vals())
+        .for_each(|((chunk, b), s)| chunk.store(if b {2} else {0} + if s {1} else {0}));
+
+    sym_bits
+}
