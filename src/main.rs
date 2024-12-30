@@ -1,4 +1,5 @@
 mod wspr;
+mod hardware;
 
 use wspr::*;
 
