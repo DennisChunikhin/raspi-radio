@@ -83,6 +83,9 @@ macro_rules! clk_div {
     }
 }
 
+
+const sleep_ms: time::Duration = time::Duration::from_millis(1);
+
 // TODO:
 // ClockTransmitter structure
 //  Configures GPIO pin to clock (ALT0)
@@ -93,23 +96,74 @@ macro_rules! clk_div {
 //  Use n-th harmonic
 
 pub struct GPIOController {
+    gpio_mmap: MmapMut,
+    gpclk_mmap: MmapMut,
     gpio: *mut u32,
     gpclk: *mut u32,
 }
 
 impl GPIOController {
     pub fn new() -> GPIOController {
-        // TODO: you may need to preserve the MmapMut struct,
-        // otherwise the pointer might become dangling
-        let gpio = get_mmap(GPIO_BASE).expect("mmap failed").as_mut_ptr() as *mut u32;
-        let gpclk = get_mmap(GPCLK_BASE).expect("mmap failed").as_mut_ptr() as *mut u32;
+        // Must preserve Mmap object so that pointer doesn't dangle
+        let mut gpio_mmap = get_mmap(GPIO_BASE).expect("mmap failed");
+        let mut gpclk_mmap = get_mmap(GPCLK_BASE).expect("mmap failed");
 
-        unsafe{ GPIOController { gpio, gpclk: gpclk.offset(CLK_OFFSET) } }
+        let mut gpio = gpio_mmap.as_mut_ptr() as *mut u32;
+        let mut gpclk = gpclk_mmap.as_mut_ptr() as *mut u32;
+
+        unsafe{ GPIOController { gpio, gpclk: gpclk.offset(CLK_OFFSET), gpio_mmap, gpclk_mmap } }
+    }
+
+    pub unsafe fn clock_busy(&self) -> bool {
+        clk_busy!(self)
+    }
+
+    pub unsafe fn test_clock(&self, g: isize, divI: u32) {
+        let sleep_dur = time::Duration::from_nanos(1);
+
+        gpio_out_clear!(self, g);
+
+        thread::sleep(sleep_ms);
+
+        gpio_alt0!(self, g);
+
+        if clk_busy!(self) {
+            clk_disab!(self);
+        }
+        while clk_busy!(self) { thread::sleep(sleep_ms) };
+
+        // Set clock source to PLLD (750MHz source) and MASH to 1
+        self.gpclk.write_volatile( CLK_PSW | 6 | 1<<9 );
+
+        thread::sleep(sleep_ms);
+
+        // Set clock frequency
+        self.gpclk.offset(1).write_volatile( CLK_PSW | (divI << 12) );
+
+        thread::sleep(sleep_ms);
+        
+        clk_enab!(self);
+
+        thread::sleep(sleep_ms);
+
+        for j in 0..1000 {
+            for i in (0..999).step_by(10) {
+                // Set clock frequency
+                if i==10*(j/10) || i==10*(j/10)+10 {
+                    clk_div!(self, divI+1, 0);
+                } else {
+                    clk_div!(self, divI, i);
+                }
+
+                thread::sleep(sleep_dur);
+            }
+        }
+
+        clk_disab!(self);
     }
 
     pub unsafe fn pulse_clock(&self, g: isize, divI: u32, divF: u32, ms: u64) {
         let sleep_dur = time::Duration::from_millis(ms);
-        let sleep_ms = time::Duration::from_millis(1);
 
         gpio_out_clear!(self, g);
 
@@ -134,6 +188,75 @@ impl GPIOController {
         thread::sleep(sleep_dur);
 
         // Stop clock
+        clk_disab!(self);
+    }
+
+    // TODO: Write script to read in file image array, and test this function
+    pub unsafe fn broadcast_image(&self, pos_array: *const i32, wait_array: *const i32, data_len: isize, repeats: u32) {
+        let g = 4;
+
+        // Set GPIO pin to ALT0 (GPCLK0 for GPIO pin 4)
+        gpio_out_clear!(self, g);
+        gpio_alt0!(self, g);
+
+        let divI = 35;
+
+        // Stop clock
+        if clk_busy!(self) {
+            clk_disab!(self)
+        }
+        while clk_busy!(self) { thread::sleep(sleep_ms) };
+
+        // Set clock source to PLLD (750MHz source) and MASH to 1
+        self.gpclk.write_volatile( CLK_PSW | 6 | 1<<9 );
+
+        thread::sleep(sleep_ms);
+
+        // Set clock frequency
+        clk_div!(self, divI, 0);
+
+        thread::sleep(sleep_ms);
+
+        // Start clock
+        clk_enab!(self);
+
+        thread::sleep(sleep_ms);
+
+        // Broadcast the image
+        // Pointer arithmetic implementation copied from C
+        let mut pos_pntr = pos_array;
+        let mut wait_pntr = wait_array;
+        while pos_pntr.offset_from(pos_array) != data_len {
+            let pos_snapshot = pos_pntr;
+            let wait_snapshot = wait_pntr;
+
+            for i in 0..repeats {
+                pos_pntr = pos_snapshot;
+                wait_pntr = wait_snapshot;
+
+                while *pos_pntr != -1 {
+                    // Set clock frequency
+                    clk_div!(self, divI, *pos_pntr as u32);
+
+                    for j in 0..*wait_pntr {
+                        thread::sleep(sleep_ms);
+                    }
+
+                    pos_pntr = pos_pntr.offset(1);
+                    wait_pntr = wait_pntr.offset(1);
+                }
+
+                clk_div!(self, divI+1, 0);
+                for j in 0..*wait_pntr {
+                    thread::sleep(sleep_ms);
+                }
+            }
+            
+            pos_pntr = pos_pntr.offset(1);
+            wait_pntr = wait_pntr.offset(1);
+        }
+        
+        // Turn clock off
         clk_disab!(self);
     }
 }
