@@ -7,7 +7,7 @@ const REG1_TAP: u32 = 0xE4613C47;
 const NUM_BITS_WSPR: usize = 81;
 
 type WSPRBits = BitArr!(for NUM_BITS_WSPR*2);
-type SymbolBits = BitArr!(for NUM_BITS_WSPR*4);
+pub type SymbolBits = BitArr!(for NUM_BITS_WSPR*4);
 
 pub struct Callsign {
     value: String,
