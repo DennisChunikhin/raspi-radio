@@ -21,7 +21,7 @@ fn main() {
         //cntrl.pulse_clock(4, 35, 1, 5000);
         //cntrl.test_clock(4, 35);
         //println!("{}", cntrl.clock_busy());
-        cntrl.broadcast_image(pos_array.as_ptr(), wait_array.as_ptr(), data_len, 20);
+        cntrl.broadcast_image(pos_array.as_ptr(), wait_array.as_ptr(), data_len, 3);
     }
 
     //let base_freq = 14.0956;

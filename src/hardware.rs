@@ -197,6 +197,8 @@ impl GPIOController {
 
     // TODO: Write script to read in file image array, and test this function
     pub unsafe fn broadcast_image(&self, pos_array: *const i32, wait_array: *const i32, data_len: isize, repeats: u32) {
+        let sleep_dur = time::Duration::from_nanos(1);
+
         let g = 4;
         let divI = 35;
 
@@ -230,7 +232,7 @@ impl GPIOController {
 
                 clk_div!(self, divI+1, 0);
                 for j in 0..*wait_pntr {
-                    thread::sleep(sleep_ms);
+                    thread::sleep(sleep_dur);
                 }
             }
             
