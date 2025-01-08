@@ -6,7 +6,7 @@ use memmap::*;
 use chrono::prelude::*;
 use chrono::{TimeDelta, DurationRound};
 
-use crate::wspr::SymbolBits;
+use crate::wspr::WSPRSymbol;
 use bitvec::prelude::bits;
 
 
@@ -90,11 +90,11 @@ macro_rules! clk_div {
     }
 }
 
-macro_rules! div_from_freq {
+#[macro_export] macro_rules! div_from_freq {
     ($freq:expr, $base:expr) => {{
         let div: f64 = $base/$freq;
         let divI = div.trunc();
-        (divI as u32, ((div-divI)*1024.0).round() as u32)
+        (divI as u32, ((div-divI)*4096.0).round() as u32)
     }}
 }
 
@@ -102,7 +102,7 @@ macro_rules! div_from_freq {
 const sleep_ms: time::Duration = time::Duration::from_millis(1);
 
 // WSPR FSK encoding parameters
-const FREQ_SHIFT: f64 = 12000f64/8192f64; // Hz
+const FREQ_SHIFT: f64 = 0.012000f64/8192f64; // MHz
 
 // TODO:
 // ClockTransmitter structure
@@ -254,16 +254,21 @@ impl GPIOController {
 
     // TODO: add checks for proper (safe) frequency ranges
     // Good idea to add these to turn_on_clock method
-    pub unsafe fn transmit_wspr(&self, bits: SymbolBits, base_freq: f64) {
+    pub unsafe fn transmit_wspr(&self, symbols: Vec<WSPRSymbol>, base_freq: f64) {
+        if base_freq >= 2.1 {
+            eprintln!("Warning: Tuning resolution is insufficient for WSPR at above approximately 2.1 MHz");
+        }
+
         // Set up clock and clock frequencies
-        let tone_len = time::Duration::from_secs_f64(FREQ_SHIFT.recip());
+        let tone_len = time::Duration::from_secs_f64(FREQ_SHIFT.recip()/1000000.);
 
         // Symbol frequencies
-        let base_freq = 750.0; // Clock base frequency
-        let (divI_0, divF_0) = div_from_freq!(base_freq, base_freq);
-        let (divI_1, divF_1) = div_from_freq!(base_freq+FREQ_SHIFT, base_freq);
-        let (divI_2, divF_2) = div_from_freq!(base_freq+FREQ_SHIFT*2., base_freq);
-        let (divI_3, divF_3) = div_from_freq!(base_freq+FREQ_SHIFT*3., base_freq);
+        let pll_freq = 750.0; // Clock base frequency
+        let (divI_0, divF_0) = div_from_freq!(base_freq, pll_freq);
+        let (divI_1, divF_1) = div_from_freq!(base_freq+FREQ_SHIFT, pll_freq);
+        let (divI_2, divF_2) = div_from_freq!(base_freq+FREQ_SHIFT*2., pll_freq);
+        let (divI_3, divF_3) = div_from_freq!(base_freq+FREQ_SHIFT*3., pll_freq);
+        println!("{} {}, {} {}, {} {}, {} {}", divI_0, divF_0, divI_1, divF_1, divI_2, divF_2, divI_3, divF_3);
 
         self.prepare_clock(4, divI_0, divF_0);
         thread::sleep(sleep_ms);
@@ -274,11 +279,13 @@ impl GPIOController {
         // We leave handling wrapping time to the poor chrono crate
         let two_mins = TimeDelta::minutes(2);
 
-        let now = Utc::now()
+        let mut now = Utc::now()
             .duration_trunc(two_mins)
             .unwrap();
 
-        let dur = (now + two_mins)
+        now += two_mins;
+
+        let dur = now
             .signed_duration_since(Utc::now())
             .to_std()
             .unwrap();
@@ -288,19 +295,17 @@ impl GPIOController {
 
         // Start transmitting
         // Let's hope no other process messed with the clock settings while we were waiting :3
-        println!("Transmition started");
+        println!("Transmission started");
 
         clk_enab!(self);
 
         // Perhaps not the best way to iterate thru the symbol bits, but fast enough
-        for symbol in bits.chunks(2) {
-            match symbol.iter().by_vals().enumerate()
-                    .fold(0, |acc, (i, b)| acc + if b {1+i} else {0}) {
-                0 => clk_div!(self, divI_0, divF_0),
-                1 => clk_div!(self, divI_1, divF_1),
-                2 => clk_div!(self, divI_2, divF_2),
-                3 => clk_div!(self, divI_3, divF_3),
-                _ => (),
+        for symbol in symbols {
+            match symbol {
+                WSPRSymbol::A => clk_div!(self, divI_0, divF_0),
+                WSPRSymbol::B => clk_div!(self, divI_1, divF_1),
+                WSPRSymbol::C => clk_div!(self, divI_2, divF_2),
+                WSPRSymbol::D => clk_div!(self, divI_3, divF_3),
             };
 
             thread::sleep(tone_len);

@@ -7,7 +7,13 @@ const REG1_TAP: u32 = 0xE4613C47;
 const NUM_BITS_WSPR: usize = 81;
 
 type WSPRBits = BitArr!(for NUM_BITS_WSPR*2);
-pub type SymbolBits = BitArr!(for NUM_BITS_WSPR*4);
+
+pub enum WSPRSymbol {
+    A,
+    B,
+    C,
+    D
+}
 
 pub struct Callsign {
     value: String,
@@ -144,16 +150,25 @@ impl WSPRMessage {
 
     // Merges the 162 bit encoded and interleaved WSPR message with a set pseudo-random synchronization
     // bit vector to generate 2-bit symbol values for use in transmission modulation
-    pub fn get_symbols(bits: WSPRBits) -> SymbolBits {
+    pub fn get_symbols(bits: WSPRBits) -> Vec<WSPRSymbol> {
         let sync_vec: WSPRBits = bitarr![1,1,0,0,0,0,0,0,1,0,0,0,1,1,1,0,0,0,1,0,0,1,0,1,1,1,1,0,0,0,0,0,0,0,1,0,0,1,0,1,0,0,0,0,0,0,1,0,1,1,0,0,1,1,0,1,0,0,0,1,1,0,1,0,0,0,0,1,1,0,1,0,1,0,1,0,1,0,0,1,0,0,1,0,1,1,0,0,0,1,1,0,1,0,1,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,1,1,1,0,1,1,0,0,1,1,0,1,0,0,0,1,1,1,0,0,0,0,0,1,0,1,0,0,1,1,0,0,0,0,0,0,0,1,1,0,1,0,1,1,0,0,0,1,1,0,0,0];
+        
+        //let mut sym_bits: SymbolBits = bitarr![0; NUM_BITS_WSPR*4];
+        let mut sym_bits = Vec::new();
 
-        let mut sym_bits: SymbolBits = bitarr![0; NUM_BITS_WSPR*4];
-
-        sym_bits
-            .chunks_mut(2)
-            .zip(bits.iter().by_vals())
-            .zip(sync_vec.iter().by_vals())
-            .for_each(|((chunk, b), s)| chunk.store(if b {2} else {0} + if s {1} else {0}));
+        for (i, (b, s)) in bits.iter().by_vals().zip(sync_vec.iter().by_vals()).enumerate() {
+            if i == NUM_BITS_WSPR*2 {
+                break;
+            }
+            sym_bits.push(
+                match (b, s) {
+                    (false, false) => WSPRSymbol::A,
+                    (false, true) => WSPRSymbol::B,
+                    (true, false) => WSPRSymbol::C,
+                    (true, true) => WSPRSymbol::D,
+                }
+            );
+        }
 
         sym_bits
     }
@@ -162,7 +177,7 @@ impl WSPRMessage {
     // Converts a callsign, locator, and power an encodes it to a WSPR symbol bit vector ready for
     // transmission
     // Consumes self
-    pub fn encode_transmission(self) -> SymbolBits {
+    pub fn encode_transmission(self) -> Vec<WSPRSymbol> {
         let bits = self.encode();
         let bits = WSPRMessage::convolution_code(bits);
         let bits = WSPRMessage::interleave(bits);
