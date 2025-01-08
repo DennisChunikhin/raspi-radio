@@ -3,9 +3,12 @@ use std::error::Error;
 use std::fs::{OpenOptions,File};
 use std::io::{BufReader,BufRead};
 use memmap::*;
+use chrono::prelude::*;
+use chrono::{TimeDelta, DurationRound};
 
 use crate::wspr::SymbolBits;
 use bitvec::prelude::bits;
+
 
 // This file implements a simplified GPIO controller for a raspberry pi 4
 // See the datasheet: https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf
@@ -133,14 +136,13 @@ impl GPIOController {
         clk_busy!(self)
     }
 
-    // Not marked public since I want all public functions to turn off clock after use
-    // g must be a pin that has CLK0 as its ALT0 function
-    unsafe fn turn_on_clock(&self, g: isize, divI: u32, divF: u32) {
-        // Set pin output to ALT0 (which is CLK0 on pin 4)
+    // Set up clock without turning it on
+    unsafe fn prepare_clock(&self, g: isize, divI: u32, divF: u32) {
+         // Set pin output to ALT0 (which is CLK0 on pin 4)
         gpio_out_clear!(self, g);
         gpio_alt0!(self, g);
 
-        // Turn of clock (before modifying clock settings)
+        // Turn off clock (before modifying clock settings)
         if clk_busy!(self) {
             clk_disab!(self);
         }
@@ -153,6 +155,12 @@ impl GPIOController {
 
         // Set clock frequency
         clk_div!(self, divI, divF);
+    }
+
+    // Not marked public since I want all public functions to turn off clock after use
+    // g must be a pin that has CLK0 as its ALT0 function
+    unsafe fn turn_on_clock(&self, g: isize, divI: u32, divF: u32) {
+        self.prepare_clock(g, divI, divF);
 
         thread::sleep(sleep_ms);
 
@@ -244,20 +252,45 @@ impl GPIOController {
         clk_disab!(self);
     }
 
+    // TODO: add checks for proper (safe) frequency ranges
+    // Good idea to add these to turn_on_clock method
     pub unsafe fn transmit_wspr(&self, bits: SymbolBits, base_freq: f64) {
-        // TODO: add checks for proper (safe) frequency ranges
-        // Good idea to add these to turn_on_clock method
+        // Set up clock and clock frequencies
         let tone_len = time::Duration::from_secs_f64(FREQ_SHIFT.recip());
 
         // Symbol frequencies
-        let base_freq = 750.0;
+        let base_freq = 750.0; // Clock base frequency
         let (divI_0, divF_0) = div_from_freq!(base_freq, base_freq);
         let (divI_1, divF_1) = div_from_freq!(base_freq+FREQ_SHIFT, base_freq);
         let (divI_2, divF_2) = div_from_freq!(base_freq+FREQ_SHIFT*2., base_freq);
         let (divI_3, divF_3) = div_from_freq!(base_freq+FREQ_SHIFT*3., base_freq);
 
-        // TODO: Timing (synchronization)
-        self.turn_on_clock(4, divI_0, divF_0);
+        self.prepare_clock(4, divI_0, divF_0);
+        thread::sleep(sleep_ms);
+
+
+        // A crude way of waiting until the next 2-minute mark
+        // thread::sleep_until is unstable and more trouble than its worth
+        // We leave handling wrapping time to the poor chrono crate
+        let two_mins = TimeDelta::minutes(2);
+
+        let now = Utc::now()
+            .duration_trunc(two_mins)
+            .unwrap();
+
+        let dur = (now + two_mins)
+            .signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap();
+
+        thread::sleep(dur);
+
+
+        // Start transmitting
+        // Let's hope no other process messed with the clock settings while we were waiting :3
+        println!("Transmition started");
+
+        clk_enab!(self);
 
         // Perhaps not the best way to iterate thru the symbol bits, but fast enough
         for symbol in bits.chunks(2) {
@@ -274,6 +307,7 @@ impl GPIOController {
         }
 
         clk_disab!(self);
+        println!("Transmission ended");
     }
 }
 
