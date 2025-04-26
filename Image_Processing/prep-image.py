@@ -67,7 +67,7 @@ if __name__=="__main__":
     img = img.resize((width, int(width*aspect)))
 
     # Pre-Processing
-    img_data = np.asarray(img)[::-1]
+    img_data = np.flip(np.asarray(img), axis=(0,1)) # [::-1]
     
     img_data = img_data / np.max(img_data)
     img_data = (img_data * num_divisions).astype(int)

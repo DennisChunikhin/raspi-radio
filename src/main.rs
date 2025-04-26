@@ -7,8 +7,23 @@ use hardware::*;
 use bitvec::prelude::*;
 
 fn main() {
+    // CW
+    let base_freq = 2.;
+    let pll_freq = 750.;
+    let (divI, divF) = div_from_freq!(base_freq, pll_freq);
+
+    let g_in = 12;
+    let g_clk = 4;
+
+    let cntrl = GPIOController::new();
+    println!("Broadcasting CW at {} MHz", base_freq*100.);
+    unsafe {
+        cntrl.cw(g_in, g_clk, divI, divF);
+    }
+
+
     // WSPR encoding test
-    let wspr_msg = WSPRMessage::new("KC3ZNA", "AA00", 1);
+    /*let wspr_msg = WSPRMessage::new("KC3ZNA", "AA00", 1);
     let wspr_msg = wspr_msg.encode_transmission();
     println!("{}", wspr_msg.len());
 
@@ -30,5 +45,5 @@ fn main() {
         //println!("{}", cntrl.clock_busy());
         //cntrl.broadcast_image(pos_array.as_ptr(), wait_array.as_ptr(), data_len, 3);
         cntrl.transmit_wspr(wspr_msg, base_freq);
-    }
+    }*/
 }

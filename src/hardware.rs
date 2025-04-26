@@ -51,6 +51,13 @@ macro_rules! gpio_alt0 {
     }
 }
 
+// Get GPIO level
+macro_rules! gpio_lev {
+    ($self:expr, $g:expr) => {
+        $self.gpio.offset(($g)/32 + 0x34/4).read_volatile() & 1<<(($g)%32)
+    }
+}
+
 //#define GPIO_SET *(gpio + 0x1c/4)	// Offset 0x1c
 //#define GPIO_CLR *(gpio + 0x28/4)	// Offset 0x28
 
@@ -138,7 +145,7 @@ impl GPIOController {
 
     // Set up clock without turning it on
     unsafe fn prepare_clock(&self, g: isize, divI: u32, divF: u32) {
-         // Set pin output to ALT0 (which is CLK0 on pin 4)
+        // Set pin output to ALT0 (which is CLK0 on pin 4)
         gpio_out_clear!(self, g);
         gpio_alt0!(self, g);
 
@@ -201,6 +208,35 @@ impl GPIOController {
 
         // Stop clock
         clk_disab!(self);
+
+    }
+
+    pub unsafe fn cw(&self, g_input: isize, g_clk: isize, divI: u32, divF: u32) {
+        //let sleep_dur = time::Duration::from_nanos(1);
+        let sleep_dur = time::Duration::from_millis(1);
+        let mut clock_on = false;
+
+        // Set pin to input and prepare clock
+        gpio_out_clear!(self, g_input);
+        self.prepare_clock(g_clk, divI, divF);
+
+        thread::sleep(sleep_ms);
+
+        while true {
+            //let i = gpio_lev!(self, g_input);
+            //println!("{}", i);
+            if gpio_lev!(self, g_input) != 0 {
+                if !clock_on {
+                    self.turn_on_clock(g_clk, divI, divF);
+                    clock_on = true;
+                }
+            } else if clock_on {
+                clk_disab!(self);
+                clock_on = false;
+            }
+
+            thread::sleep(sleep_dur);
+        }
     }
 
     // TODO: Write script to read in file image array, and test this function
