@@ -1,0 +1,7 @@
+#!/bin/bash
+
+while true
+do
+	./image Image_Processing/Images/testudo.txt 50
+	./image Image_Processing/Images/w3eax.txt 35
+done

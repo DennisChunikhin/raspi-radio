@@ -15,9 +15,7 @@ pub enum WSPRSymbol {
     D
 }
 
-pub struct Callsign {
-    value: String,
-}
+pub struct Callsign(String);
 
 impl Callsign {
     // Constructor
@@ -31,23 +29,22 @@ impl Callsign {
             }
         );
 
-        Callsign { value: format!("{: <6}", callsign) }
+        Callsign(format!("{: <6}", callsign))
     }
 
     // Character to numerical code according to WSPR protocol
     pub fn callsign_char_lookup(chr: char) -> u32 {
-        if let Some(digit) = chr.to_digit(10) {
-            digit
-        } else if chr==' ' {
-            36
-        } else {
-            (chr as u32) - 55
-        }
+        chr.to_digit(10).unwrap_or_else(||
+            match chr {
+                ' ' => 36,
+                _ => (chr as u32) - 55
+            }
+        )
     }
 
     // Encodes callsign according to WSPR protocol (28 bit output)
     pub fn encode(&self) -> u32 {
-        self.value
+        self.0
             .chars()
             .zip( [1,36,10,27,27,27].iter() )
             .fold(0, |acc, (chr, m)| acc*m + Callsign::callsign_char_lookup(chr))
@@ -55,10 +52,26 @@ impl Callsign {
     }
 }
 
+pub struct Locator(u32, u32, u32, u32);
+
+impl Locator {
+    pub fn from_str(locator: &str) -> Option<Self> {
+        match locator.as_bytes() {
+            [field_1, field_2, sq_1, sq_2] => Some(Self {
+                0: *field_1 as u32 - 65,
+                1: *field_2 as u32 - 65,
+                2: *sq_1 as u32,
+                3: *sq_2 as u32
+            }),
+            _ => None
+        }
+    }
+}
+
 
 pub struct WSPRMessage {
     callsign: Callsign,
-    locator: String,
+    locator: Locator,
     power: u32,
 }
 
@@ -70,22 +83,12 @@ impl WSPRMessage {
         }
 
         let callsign = Callsign::new(callsign);
-        WSPRMessage { callsign, locator: locator.to_string(), power }
+        WSPRMessage { callsign, locator: Locator::from_str(locator).expect("Invalid maidenhead locator :3"), power }
     }
     
     // Encodes 4-character Maidenhead Locator and power according to WSPR protocol (22 bit output)
     pub fn encode_locator_power(&self) -> u32 {
-        let values: Vec<u32> = self.locator
-            .chars()
-            .map(|chr|
-                if let Some(digit) = chr.to_digit(10) {
-                    digit
-                } else {
-                    (chr as u32) - 65
-                })
-            .collect();
-
-        ((179 - 10*values[0] - values[2])*180 + 10*values[1] + values[3])*128 + self.power + 64
+        ((179 - 10*self.locator.0 - self.locator.2)*180 + 10*self.locator.1 + self.locator.3)*128 + self.power + 64
     }
 
     // Encodes the callsign, Maidenhead Locator, and power to an 81 bit WSPR message

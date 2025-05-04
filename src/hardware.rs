@@ -222,7 +222,7 @@ impl GPIOController {
 
         thread::sleep(sleep_ms);
 
-        while true {
+        loop {
             //let i = gpio_lev!(self, g_input);
             //println!("{}", i);
             if gpio_lev!(self, g_input) != 0 {
@@ -239,7 +239,6 @@ impl GPIOController {
         }
     }
 
-    // TODO: Write script to read in file image array, and test this function
     pub unsafe fn broadcast_image(&self, pos_array: *const i32, wait_array: *const i32, data_len: isize, repeats: u32) {
         let sleep_dur = time::Duration::from_nanos(1);
 
@@ -258,7 +257,7 @@ impl GPIOController {
             let pos_snapshot = pos_pntr;
             let wait_snapshot = wait_pntr;
 
-            for i in 0..repeats {
+            for _ in 0..repeats {
                 pos_pntr = pos_snapshot;
                 wait_pntr = wait_snapshot;
 
@@ -266,8 +265,8 @@ impl GPIOController {
                     // Set clock frequency
                     clk_div!(self, divI, *pos_pntr as u32);
 
-                    for j in 0..*wait_pntr {
-                        thread::sleep(sleep_ms);
+                    for _ in 0..*wait_pntr {
+                        thread::sleep(sleep_dur);
                     }
 
                     pos_pntr = pos_pntr.offset(1);
@@ -275,7 +274,7 @@ impl GPIOController {
                 }
 
                 clk_div!(self, divI+1, 0);
-                for j in 0..*wait_pntr {
+                for _ in 0..*wait_pntr {
                     thread::sleep(sleep_dur);
                 }
             }
